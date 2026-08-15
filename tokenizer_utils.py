@@ -1,117 +1,84 @@
 """
-Hyperion-V3: Production Code-Optimized BPE Tokenizer.
+Hyperion-V3: Tokenizer Utilities Module.
+Calibrated for a 32,000 vocabulary size limit.
 """
-
 import os
-from tokenizers import Tokenizer, regex
+import json
+from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import (
-    Sequence,
-    Split,
-    ByteLevel,
-)
-from tokenizers.decoders import ByteLevel as ByteDecoder
+from tokenizers.pre_tokenizers import ByteLevel
+from tokenizers.processors import ByteLevel as BLPost
 
+# --- CORE TOKENIZER CONFIG DATA ---
+TOKENIZER_JSON = "hyperion_tokenizer.json"
+VOCAB_SIZE = 32000
 
-def train_hyperion_tokenizer(
-    corpus_path: str,
-    vocab_size: int = 4000,
-    save_path: str = "hyperion_tokenizer.json",
-) -> Tokenizer:
-    """Trains an enterprise code sub-word processor."""
-    print(
-        f"--- Training Tokenizer Engine "
-        f"(Vocab Size: {vocab_size}) ---"
+# Critical structural logic tokens for MoE and FIM
+SPECIAL_TOKENS = [
+    "<|endoftext|>",
+    "<|thinking|>",
+    "</|thinking|>",
+    "<|fim_prefix|>",
+    "<|fim_suffix|>",
+    "<|fim_middle|>"
+]
+
+def build_and_train_tokenizer(
+    source_txt: str = "data/train.txt"
+):
+    """
+    Trains a custom Byte-Level BPE tokenizer
+    calibrated to match Hyperion's 1.11B matrix space.
+    """
+    print(f"[Tokenizer] Training on: {source_txt}")
+    
+    if not os.path.exists(source_txt):
+        print("[-] Error: Source training data missing.")
+        return None
+
+    # Initialize a clean Byte-Fallback BPE model
+    tokenizer = Tokenizer(BPE(unk_token="<|endoftext|>"))
+    
+    # Configure Byte-Level character splits
+    tokenizer.pre_tokenizer = ByteLevel(
+        add_prefix_space=False
     )
-
-    # 1. Instantiate clean byte-fallback BPE infrastructure
-    tokenizer = Tokenizer(BPE(unk_token=None, byte_fallback=True))
-
-    # 2. Advanced Multi-Stage Regex Splitting Core
-    # Ensures indent steps and keywords are cleanly split
-    code_pattern = (
-        r"'s|'t|'re|'ve|'m|'ll|'d|"
-        r"[^\r\n\p{L}\p{N}]?\p{L}+|"
-        r"\p{N}{1,3}|"
-        r"[^\s\p{L}\p{N}]+|"
-        r"[\r\n]+|"
-        r"\s+(?=>[\r\n])|"
-        r"\s+"
-    )
-
-    tokenizer.pre_tokenizer = Sequence(
-        [
-            Split(
-                pattern=regex.Regex(code_pattern),
-                behavior="isolated",
-            ),
-            ByteLevel(
-                add_prefix_space=False,
-                use_regex=False,
-            ),
-        ]
-    )
-
-    # Attach byte decoder to accurately reconstruct tabs and symbols
-    tokenizer.decoder = ByteDecoder()
-
-    # 3. Secure Core Layout Boundary Invariants
+    
     trainer = BpeTrainer(
-        special_tokens=[
-            "[PAD]",
-            "[BOS]",
-            "[EOS]",
-            "<|before_code_insertion|>",
-            "<|after_code_insertion|>",
-            "<|middle_insert_prediction|>",
-        ],
-        vocab_size=vocab_size,
-        show_progress=True,
+        vocab_size=VOCAB_SIZE,
+        special_tokens=SPECIAL_TOKENS,
+        initial_alphabet=ByteLevel.alphabet()
     )
-
-    # Ingest text strings and compile the structural mapping
-    tokenizer.train([corpus_path], trainer)
-    tokenizer.save(save_path)
-
-    print(f"Tokenizer compiled successfully to: {save_path}\n")
+    
+    # Train directly from your local text matrices
+    tokenizer.train([source_txt], trainer)
+    
+    # Enable post-processing for clean serialization
+    tokenizer.post_processor = BLPost(
+        trim_offsets=False
+    )
+    
+    tokenizer.save(TOKENIZER_JSON)
+    print(f"[✓] Tokenizer saved to: {TOKENIZER_JSON}")
     return tokenizer
 
-
-def load_tokenizer(
-    path: str = "hyperion_tokenizer.json",
-) -> Tokenizer:
-    """Loads a pre-compiled structural asset snapshot."""
+def load_tokenizer(path: str = TOKENIZER_JSON):
+    """Loads tokenizer from local JSON workspace."""
     if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Asset tracking mismatch error: '{path}' missing."
-        )
+        # Auto-train backup if configuration file is missing
+        print("[!] Tokenizer config not found. Auto-building...")
+        return build_and_train_tokenizer()
+        
     return Tokenizer.from_file(path)
 
-
 if __name__ == "__main__":
-    print("Executing tokenization engine validation tests...")
-    temp_raw_data = "tokenizer_mock.txt"
-
-    # Write structural python test patterns
-    with open(temp_raw_data, "w", encoding="utf-8") as f:
-        f.write("def compute_embeddings(tokens):\n")
-        f.write("    return model.encode(tokens)\n")
-
-    # Run structural code compilation testing pass
-    tok = train_hyperion_tokenizer(temp_raw_data, vocab_size=500)
-
-    test_str = "    return model.encode"
-    encoded = tok.encode(test_str)
-    decoded = tok.decode(encoded.ids)
-
-    print("\n--- Tokenizer Functional Validation ---")
-    print(f"Input Code Line Slice:  '{test_str}'")
-    print(f"Sub-Word Array Map IDs: {encoded.ids}")
-    print(f"Decoded Identity Match: '{decoded}' [SUCCESS]")
-
-    # System file housekeeping cleanup parameters
-    if os.path.exists(temp_raw_data):
-        os.remove(temp_raw_data)
-    if os.path.exists("hyperion_tokenizer.json"):
-        os.remove("hyperion_tokenizer.json")
+    # Create mock text if data directory doesn't exist
+    os.makedirs("data", exist_ok=True)
+    train_path = "data/train.txt"
+    
+    if not os.path.exists(train_path):
+        with open(train_path, "w", encoding="utf-8") as out:
+            out.write("def hello_world():\n    print('Hyperion')\n")
+            
+    build_and_train_tokenizer(train_path)

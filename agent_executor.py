@@ -1,5 +1,6 @@
 """
 Hyperion-V3: Autonomous Agent Tool Executor.
+Includes native multi-step socket-level crawling boundaries.
 """
 import json
 import re
@@ -11,19 +12,27 @@ class HyperionAgentExecutor:
         self.engine = engine
         self.tools = HyperionTools()
 
-    def run_tool_loop(self, user_prompt: str, max_steps: int = 5) -> str:
+    def run_tool_loop(self, user_prompt: str, max_steps: int = 10) -> str:
         """
         Orchestrates an interactive, autonomous ReAct tool execution chain loop.
-        Ensures clear boundaries between internal reasoning steps and system feedback loops.
+        Calibrated to force the model to continuously browse and crawl deep web paths.
         """
         system_instructions = (
             "System Instructions:\n"
-            "You are an elite autonomous agent. You must solve the user task using step-by-step reasoning.\n"
-            "You have access to the following tools:\n"
-            "1. Read File:   [READ:path]\n"
-            "2. Write File:  [WRITE:path|content]\n"
-            "3. Run Python:  [EXEC:code]\n"
-            "4. Terminal:    [CMD:command]\n\n"
+            "You are an elite autonomous research and coding agent.\n"
+            "You must solve the user task using comprehensive, step-by-step reasoning.\n"
+            "You have access to the following native tools:\n"
+            "1. Read Local File:   [READ:path]\n"
+            "2. Write Local File:  [WRITE:path|content]\n"
+            "3. Run Python:        [EXEC:code]\n"
+            "4. Terminal Command:  [CMD:command]\n"
+            "5. Socket Web Browse: [BROWSE:url]\n"
+            "6. Extract Hyperlinks:[EXTRACT_LINKS:url]\n\n"
+            "CRAWLING DIRECTIVES:\n"
+            "- Never guess or rely on stale pre-trained weights for live information.\n"
+            "- You are expected to use [BROWSE:url] and [EXTRACT_LINKS:url] frequently.\n"
+            "- Always parse a directory page, extract its outgoing hyperlinks, and browse "
+            "nested sub-paths sequentially to collect deep validation context.\n\n"
             "To invoke a tool, you MUST structure your response precisely as:\n"
             "An optional <|thinking|> reasoning trace block, followed by the exact tool call token tag.\n"
             "Do not mix multiple tools in one step. Wait for the tool output before proceeding."
@@ -37,7 +46,7 @@ class HyperionAgentExecutor:
         )
 
         for step in range(max_steps):
-            print(f" [Agent] Tool Step Execution: #{step + 1}/{max_steps}")
+            print(f"🤖 [Agent] Tool Step Execution: #{step + 1}/{max_steps}")
             
             # Generate next reasoning stream token sequence with low temperature for deterministic routing
             response = self.engine.generate(
@@ -46,14 +55,14 @@ class HyperionAgentExecutor:
                 temperature=0.1
             ).strip()
             
-            print(f" [Model Thought Trace]:\n{response}\n")
+            print(f"🧠 [Model Thought Trace]:\n{response}\n")
 
             # Check for structural tool execution hooks using non-greedy multiline tracking
-            tool_call = re.search(r"\[(READ|WRITE|EXEC|CMD)\s*:\s*(.*?)\]", response, re.DOTALL)
+            # Supports READ, WRITE, EXEC, CMD, BROWSE, and EXTRACT_LINKS
+            tool_call = re.search(r"\[(READ|WRITE|EXEC|CMD|BROWSE|EXTRACT_LINKS)\s*:\s*(.*?)\]", response, re.DOTALL)
             
             if not tool_call:
-                print(" [Agent] Loop terminated: No valid tool tags found. Returning final answer.")
-                # Ensure the conversation context captures the final generated text
+                print("🏁 [Agent] Loop terminated: No valid tool tags found. Returning final answer.")
                 current_context += f"{response}\n"
                 return response
 
@@ -71,15 +80,19 @@ class HyperionAgentExecutor:
                         path, content = tool_args.split("|", 1)
                         tool_output = self.tools.write_local_file(path.strip(), content)
                     else:
-                        tool_output = "Error: Invalid WRITE format. Missing character symbol partition delimiter (|)."
+                        tool_output = "Error: Invalid WRITE format. Missing partition delimiter (|)."
                 elif tool_type == "EXEC":
                     tool_output = self.tools.execute_python_code(tool_args)
                 elif tool_type == "CMD":
                     tool_output = self.tools.run_terminal_command(tool_args.strip())
+                elif tool_type == "BROWSE":
+                    tool_output = self.tools.raw_http_get(tool_args.strip())
+                elif tool_type == "EXTRACT_LINKS":
+                    tool_output = self.tools.extract_links_from_content(tool_args.strip(), current_context)
             except Exception as e:
                 tool_output = f"Runtime Crash Exception: {str(e)}"
 
-            print(f" [Tool Output Logs]:\n{tool_output}\n")
+            print(f"📝 [Tool Output Logs]:\n{tool_output}\n")
 
             # Update dialog flow state safely without re-appending base system prompts.
             # Explicitly close the reasoning trace block and append environmental feedback.
@@ -90,8 +103,9 @@ class HyperionAgentExecutor:
                 f"Next Action: <|thinking|>\n"
             )
 
-        print(" [Agent] Execution warning: Maximum step limit reached.")
+        print("🚨 [Agent] Execution warning: Maximum step limit reached.")
         return "Error: Maximum execution step bounds exceeded."
+
 
 if __name__ == "__main__":
     from generate import CHECKPOINT_PATH, TOKENIZER_JSON
@@ -104,6 +118,6 @@ if __name__ == "__main__":
     
     executor = HyperionAgentExecutor(base_engine)
     
-    # Run the interactive verification loop
-    task = "Write a python script to verify matrix multiplication and test it."
-    final_output = executor.run_tool_loop(task)
+    # Run the interactive multi-step crawler test verification loop
+    task = "Browse https://ycombinator.com, find the top link, extract its paths, and scrape its body."
+    final_output = executor.run_tool_loop(task, max_steps=10)

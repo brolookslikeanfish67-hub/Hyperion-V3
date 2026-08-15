@@ -1,83 +1,71 @@
-# Hyperion-V3 Engine
- **Autonomous 1.11B MoE Core**
+# Hyperion-V3 Core
+1.11B MoE Engine
 
----
+Hyperion-V3 runs locally using
+Hyper-MLA, a 64K Context Window,
+and under 6GB VRAM.
 
-Hyperion-V3 is a local MoE model.
-It features **Hyper-MLA** attention.
-It drives a **64K Context Window**.
-It uses under 6GB VRAM.
+## Step-by-Step Setup
 
----
+1. Clone the Codebase:
+```bash
+git clone https://github.com/\
+brolookslikeanfish67-hub/\
+Hyperion-V3.git
+cd Hyperion-V3
+```
 
-##  Architecture
-
-### 1. Hyper-MLA
-Key-Value caches are compressed.
-States project into a 192 rank.
-This cuts VRAM usage by over 90%.
-
-### 2. Vectorized MoE
-Routing runs via matrix stacks.
-It runs 64 experts at once.
-It uses 4 active experts per token.
-It avoids slow serial loops.
-
-### 3. Adaptive Loops
-Each block uses an inner step gate.
-If complexity scales past 0.83,
-the token cycles again.
-It loops dynamically up to 4x.
-
----
-
-##  Repository Blueprint
-
-* `data/train.txt` : Train data.
-* `data/val.txt` : Validation loop.
-* `model.py` : 1.11B MoE code.
-* `tokenizer_utils.py` : 32K BPE.
-* `dataset.py` : FIM injector.
-* `train.py` : Training loop.
-* `bench.py` : VRAM profiler.
-* `generate.py` : Inference code.
-
----
-
-##  Quick Start
-
-Install dependencies:
+2. Install Math Modules:
 ```bash
 pip install torch numpy tokenizers
 ```
 
-### Run Sequence:
-
-1. Ingest Data:
+3. Generate Code Files:
 ```bash
 python dataset.py
 ```
 
-2. Compile Vocab:
+4. Build Vocabulary Map:
 ```bash
 python tokenizer_utils.py
 ```
 
-3. Profile VRAM:
+5. Profile Local Memory:
 ```bash
 python bench.py
 ```
 
-4. Run Training:
+6. Launch Training:
 ```bash
 python train.py
 ```
 
----
+7. Run Auto Sandbox:
+```bash
+python agent_executor.py
+```
 
-##  Specifications
+## Core Features
 
-* **Total Size:** ~1.11B Parameters.
-* **Active Size:** ~284M per token.
-* **Precision:** Native bfloat16.
-* **License:** GNU GPL-3.0.
+1. Hyper-MLA: Compresses KV caches
+by 90% via 192-rank projection.
+2. Vectorized MoE: Runs 4 of 64
+experts in parallel.
+3. Adaptive Loops: Dynamic token
+re-processing up to 4x.
+4. Compiler Swarm: Sandbox code
+execution and debugging.
+
+## Core Files
+`model.py` (backbone)
+`rope.py` (positional)
+`train.py` (training)
+`swarm_engine.py` (debugger)
+`agent_executor.py` (tools)
+
+## Specs
+- Total Size: 1.11B Params
+- Active Size: 284M Tokens
+- Context Cap: 64K Tokens
+- Precision: Native BF16
+- License: GNU GPL-3.0

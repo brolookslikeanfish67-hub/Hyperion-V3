@@ -1,49 +1,83 @@
-# Hyperion-V3: Horizon-Class Coding Core Engine
+# Hyperion-V3 Engine
+ **Autonomous 1.11B MoE Core**
 
-Hyperion-V3 is an autonomous, high-performance **Mixture-of-Experts (MoE) Language Model** custom-engineered for elite source code understanding, multi-turn logical reasoning, and real-time code autocomplete tasks. It replaces standard Transformer topologies with advanced inference-acceleration layers.
+---
 
-##  Advanced Architectural Upgrades
+Hyperion-V3 is a local MoE model.
+It features **Hyper-MLA** attention.
+It drives a **64K Context Window**.
+It uses under 6GB VRAM.
 
-*   **Adaptive Thinking Recurrent Loops:** A dynamic, entropy-gated controller block adjusts computation based on complexity, allowing deeper, iterative processing.
-*   **Low-Rank Key-Value Latent Attention (Hyper-MLA):** Compresses KV cache states into a low-rank manifold, reducing VRAM usage by over 90% for a **64K maximum context window**.
-*   **Self-Correction Feedback Invariants:** Uses a non-linear transformation gate to act as a logical filter, suppressing hallucinations.
-*   **Speculative Background OS Streaming:** Asynchronous threads leverage `np.memmap` for zero-stall data ingestion.
-*   **Native Fill-in-the-Middle (FIM) Augmentation:** Implements `Prefix-Suffix-Middle` data pipelines to train on code completion tasks.
+---
+
+##  Architecture
+
+### 1. Hyper-MLA
+Key-Value caches are compressed.
+States project into a 192 rank.
+This cuts VRAM usage by over 90%.
+
+### 2. Vectorized MoE
+Routing runs via matrix stacks.
+It runs 64 experts at once.
+It uses 4 active experts per token.
+It avoids slow serial loops.
+
+### 3. Adaptive Loops
+Each block uses an inner step gate.
+If complexity scales past 0.83,
+the token cycles again.
+It loops dynamically up to 4x.
 
 ---
 
 ##  Repository Blueprint
 
-*   `model.py`: Core architecture with Hyper-MLA, adaptive routing, and self-correction filters.
-*   `tokenizer_utils.py`: Byte-fallback parser for secure, high-precision tokenization.
-*   `dataset.py`: Memory-mapped streaming with asynchronous FIM lookahead.
-*   `train.py`: High-throughput training loop with dynamic micro-step gradient accumulation.
-*   `generate.py`: Dual-mode interface for text generation and FIM code insertion.
+* `data/train.txt` : Train data.
+* `data/val.txt` : Validation loop.
+* `model.py` : 1.11B MoE code.
+* `tokenizer_utils.py` : 32K BPE.
+* `dataset.py` : FIM injector.
+* `train.py` : Training loop.
+* `bench.py` : VRAM profiler.
+* `generate.py` : Inference code.
 
 ---
 
-##  Getting Started & Installation
+##  Quick Start
 
-### 1. Install System Dependencies
-Ensure Python 3.10+ and PyTorch are installed:
-
+Install dependencies:
 ```bash
 pip install torch numpy tokenizers
 ```
 
-### 2. Dataset Environment
-Prepare a `data/` directory with `train.txt` and `val.txt` files.
+### Run Sequence:
+
+1. Ingest Data:
+```bash
+python dataset.py
+```
+
+2. Compile Vocab:
+```bash
+python tokenizer_utils.py
+```
+
+3. Profile VRAM:
+```bash
+python bench.py
+```
+
+4. Run Training:
+```bash
+python train.py
+```
 
 ---
 
-##  How To Run
+##  Specifications
 
-1.  **Tokenizer:** `python tokenizer_utils.py` to create the vocabulary map.
-2.  **Training:** `python train.py` to launch high-throughput, mixed-precision training.
-3.  **Generation:** `python generate.py` to trigger inference, text generation, or FIM code insertion tests.
-
----
-
-##  License
-
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+* **Total Size:** ~1.11B Parameters.
+* **Active Size:** ~284M per token.
+* **Precision:** Native bfloat16.
+* **License:** GNU GPL-3.0.

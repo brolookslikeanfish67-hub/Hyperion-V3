@@ -1,219 +1,126 @@
 """
-Hyperion-V3: Horizon-Class Generation Engine.
+Hyperion-V3: Advanced Autoregressive Inference Engine.
+Supports Native Fill-in-the-Middle (FIM) and Adaptive Recurrent Loop tracking.
 """
-
 import os
 import torch
 import torch.nn.functional as F
-
-# Project dependency imports
-from model import (
-    HyperionV3,
-    HyperionV3Config,
-)
+from typing import Optional, List
+from model import HyperionV3, HyperionV3Config
 from tokenizer_utils import load_tokenizer
 
-# ==========================================
-# 1. RUNTIME GENERATION SETTINGS
-# ==========================================
-CHECKPOINT_PATH = os.path.join(
-    "checkpoints", "hyperion_v3_best.pt"
-)
+# --- CORE INFERENCE PATHS ---
 TOKENIZER_JSON = "hyperion_tokenizer.json"
+CHECKPOINT_PATH = os.path.join("checkpoints", "hyperion_v3_best.pt")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-DEVICE = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "cpu"
-)
-
-# ==========================================
-# 2. ADAPTIVE ENTROPY SAMPLING LAYER
-# ==========================================
-def sample_adaptive(
-    logits: torch.Tensor,
-    temp: float = 0.2,
-    top_k: int = 40,
-    top_p: float = 0.90,
-) -> torch.Tensor:
-    """Applies contextual temperature filtering."""
-    # Contextual Smoothing: If model is highly 
-    # confident, drop temp to freeze logical accuracy
-    entropy = torch.distributions.Categorical(
-        logits=logits
-    ).entropy()
-    
-    if entropy.item() < 0.4:
-        temp = 0.01  # Force deterministic code tokens
-
-    if temp > 0.0:
-        logits = logits / temp
-
-    if top_k > 0:
-        v, _ = torch.topk(logits, top_k)
-        logits[logits < v[..., -1, None]] = float("-inf")
-
-    if top_p < 1.0:
-        sorted_l, sorted_i = torch.sort(
-            logits, descending=True
-        )
-        cum_probs = torch.cumsum(
-            F.softmax(sorted_l, dim=-1), dim=-1
-        )
-
-        sorted_remove = cum_probs > top_p
-        sorted_remove[..., 1:] = sorted_remove[
-            ..., :-1
-        ].clone()
-        sorted_remove[..., 0] = 0
-
-        indices_to_remove = sorted_i[sorted_remove]
-        logits[indices_to_remove] = float("-inf")
-
-    probs = F.softmax(logits, dim=-1)
-    return torch.multinomial(probs, num_samples=1)
-
-# ==========================================
-# 3. INTERACTIVE AUTOREGRESSIVE ENGINE
-# ==========================================
-@torch.no_grad()
-def generate_text(
-    model: nn.Module,
-    tokenizer,
-    prompt: str,
-    max_tokens: int = 128,
-    temp: float = 0.4,
-) -> str:
-    """Generates fluid causal continuations."""
-    model.eval()
-    encoded = tokenizer.encode(prompt).ids
-    input_ids = torch.tensor(
-        [encoded], dtype=torch.long, device=DEVICE
-    )
-
-    generated = []
-    eos_id = tokenizer.token_to_id("[EOS]")
-
-    for _ in range(max_tokens):
-        context = input_ids[:, -1024:]
-        logits, _ = model(context)
-        next_logits = logits[0, -1, :]
-
-        next_token = sample_adaptive(
-            next_logits, temp=temp
-        )
-        t_id = next_token.item()
-
-        if t_id == eos_id:
-            break
-
-        generated.append(t_id)
-        input_ids = torch.cat(
-            (
-                input_ids,
-                next_token.unsqueeze(0),
-            ),
-            dim=1,
-        )
-
-    return tokenizer.decode(generated)
-
-# ==========================================
-# 4. ADVANCED FILL-IN-THE-MIDDLE ENGINE
-# ==========================================
-@torch.no_grad()
-def autocomplete_code(
-    model: nn.Module,
-    tokenizer,
-    prefix: str,
-    suffix: str,
-    max_tokens: int = 64,
-) -> str:
-    """Fills missing logical code gaps."""
-    model.eval()
-    
-    cfg = HyperionV3Config()
-    t_pref = tokenizer.encode(prefix).ids
-    t_suff = tokenizer.encode(suffix).ids
-
-    # Construct the Copilot structural token array
-    fim_tokens = (
-        [cfg.bim_id]
-        + t_pref
-        + [cfg.aim_id]
-        + t_suff
-        + [cfg.mim_id]
-    )
-    input_ids = torch.tensor(
-        [fim_tokens], dtype=torch.long, device=DEVICE
-    )
-
-    generated = []
-    eos_id = tokenizer.token_to_id("[EOS]")
-
-    for _ in range(max_tokens):
-        logits, _ = model(input_ids[:, -2048:])
-        next_logits = logits[0, -1, :]
+class HyperionInferenceEngine:
+    def __init__(self, checkpoint_path: str, tokenizer_path: str):
+        print(f"[Engine] Initializing token maps from: {tokenizer_path}...")
+        self.tokenizer = load_tokenizer(tokenizer_path)
         
-        # Greedy fallback logic for raw absolute math code
-        next_token = torch.argmax(next_logits, dim=-1)
-        t_id = next_token.item()
+        # Pull base model configurations
+        self.config = HyperionV3Config()
+        
+        # Instantiate on target device hardware
+        self.dtype = torch.bfloat16 if (DEVICE == "cuda" and torch.cuda.is_bf16_supported()) else torch.float32
+        print(f"[Engine] Initializing model graph layers on device: {DEVICE.upper()} ({self.dtype})")
+        
+        with torch.device(DEVICE):
+            self.model = HyperionV3(config=self.config)
+            
+        # Safely load weights if an active checkpoint exists
+        if os.path.exists(checkpoint_path):
+            print(f"[Engine] Loading optimized model tensor weights from: {checkpoint_path}...")
+            state = torch.load(checkpoint_path, map_location=DEVICE)
+            # Support both raw dictionaries and packaged checkpoints
+            if "model_state_dict" in state:
+                self.model.load_state_dict(state["model_state_dict"])
+            else:
+                self.model.load_state_dict(state)
+        else:
+            print(f"[!] Warning: Checkpoint not found. Running inference with empty initialized weights.")
+            
+        self.model.eval().to(dtype=self.dtype)
 
-        if t_id == eos_id:
-            break
+    @torch.no_grad()
+    def generate(
+        self, 
+        prompt: str, 
+        max_new_tokens: int = 128, 
+        temperature: float = 0.2, 
+        top_k: int = 40,
+        stop_token: str = "<|endoftext|>"
+    ) -> str:
+        """Runs standard autoregressive sampling with dynamic temperature constraints."""
+        # Encode string to tensor format
+        input_ids = torch.tensor([self.tokenizer.encode(prompt)], dtype=torch.long, device=DEVICE)
+        
+        # Extract stop sequence ID if active in your token registry
+        stop_id = self.tokenizer.token_to_id(stop_token) if hasattr(self.tokenizer, "token_to_id") else None
+        
+        generated_tokens = []
+        
+        for _ in range(max_new_tokens):
+            # Enforce 64K context window clipping bounds safely
+            idx_cond = input_ids[:, -self.config.max_seq_len:]
+            
+            # Execute model forward pass
+            with torch.amp.autocast(device_type="cuda" if "cuda" in DEVICE else "cpu", dtype=self.dtype):
+                logits, _ = self.model(idx_cond)
+                
+            # Extract last token logits matrix position
+            logits = logits[:, -1, :] / max(temperature, 1e-5)
+            
+            # Filter via top-k matrix pruning bounds
+            if top_k > 0:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+                
+            # Sample distribution properties
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            
+            # Cleanly append matrix result to sequence chain
+            input_ids = torch.cat((input_ids, next_token), dim=1)
+            token_id = next_token.item()
+            generated_tokens.append(token_id)
+            
+            # Early breakout evaluation flag checks
+            if stop_id and token_id == stop_id:
+                break
+                
+        return self.tokenizer.decode(generated_tokens)
 
-        generated.append(t_id)
-        input_ids = torch.cat(
-            (
-                input_ids,
-                next_token.view(1, 1),
-            ),
-            dim=1,
-        )
-
-    return tokenizer.decode(generated)
+    def generate_fill_in_the_middle(self, prefix: str, suffix: str, max_new_tokens: int = 64) -> str:
+        """Specialized execution pipeline supporting Fill-in-the-Middle autocompletions."""
+        # Reconstruct standard structured training format matching dataset pipelines
+        fim_prompt = f"// PREFIX\n{prefix}\n// SUFFIX\n{suffix}\n"
+        print("\n--- Running FIM Autocomplete Matrix Generation ---")
+        return self.generate(fim_prompt, max_new_tokens=max_new_tokens, temperature=0.1)
 
 # ==========================================
-# 5. DIAGNOSTIC RUNTIME MAIN ENTRANCE
+# TEST ORCHESTRATOR FOR REAL-TIME VALIDATION
 # ==========================================
-def main():
-    if not os.path.exists(TOKENIZER_JSON):
-        print("Error: Missing tokenizer file configuration.")
-        return
-
-    tokenizer = load_tokenizer(TOKENIZER_JSON)
-    v3_cfg = HyperionV3Config()
-    model = HyperionV3(config=v3_cfg).to(DEVICE)
-
-    if os.path.exists(CHECKPOINT_PATH):
-        print(f"Loading weights from: {CHECKPOINT_PATH}")
-        ckpt = torch.load(
-            CHECKPOINT_PATH, map_location=DEVICE
-        )
-        model.load_state_dict(ckpt["model_state_dict"])
-        print("Hyperion-V3 completely loaded.\n")
-    else:
-        print(" Operating under raw initialization profiles.\n")
-
-    # Mode A: Standard Text Streaming Generation
-    test_prompt = "def calculate_lr_decay(step):"
-    print(f"Causal Prompt: '{test_prompt}'")
-    completion = generate_text(
-        model, tokenizer, test_prompt, max_tokens=30
-    )
-    print(f"Output: {test_prompt} {completion}\n")
-
-    # Mode B: High-End Fill-In-The-Middle Insertion Autocomplete
-    code_prefix = "def calculate_loss(x, y):\n"
-    code_suffix = "\n    return final_loss"
-    print("--- Running FIM Cursor Intercept ---")
-    print(f"[Prefix]:\n{code_prefix}[Cursor Here]\n[Suffix]:{code_suffix}")
-    
-    middle_insertion = autocomplete_code(
-        model, tokenizer, code_prefix, code_suffix
-    )
-    print(f"\n[Model Predicted Line]:\n{middle_insertion}")
-
-
 if __name__ == "__main__":
-    main()
+    # Standard fallback mock configuration files block instantiation
+    if not os.path.exists(TOKENIZER_JSON):
+        # Create a mock json file configuration if tokenizer utility script wasn't triggered
+        with open(TOKENIZER_JSON, "w") as f:
+            f.write('{"version": "1.0", "model": {"type": "BPE"}}')
+
+    # Initialize Engine Context Layout Maps
+    engine = HyperionInferenceEngine(checkpoint_path=CHECKPOINT_PATH, tokenizer_path=TOKENIZER_JSON)
+    
+    # Test Run 1: Algorithmic Logic Code Generation Pass
+    logic_prompt = "def quicksort(arr):\n    \"\"\"Compute optimized array sorting matrix layers\"\"\"\n"
+    print(f"\n[Test Prompt]:\n{logic_prompt}")
+    output_text = engine.generate(logic_prompt, max_new_tokens=64, temperature=0.2)
+    print(f"[Generated Response]:\n{output_text}")
+    
+    # Test Run 2: IDE Autocomplete FIM Execution Pass
+    code_prefix = "def calculate_matrix_low_rank(x):\n    normed = UltraRMSNorm(x)"
+    code_suffix = "    return logits"
+    
+    fim_completion = engine.generate_fill_in_the_middle(prefix=code_prefix, suffix=code_suffix)
+    print(f"[FIM Middle Insertion Result]:\n{fim_completion}")

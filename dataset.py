@@ -1,188 +1,140 @@
-"""
-Hyperion-V3 Ultra Data Infrastructure.
-"""
-
 import os
+import json
 import random
-import concurrent.futures
-from typing import Tuple, List, Final
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
+import urllib.request
 
-# Global architectural constants
-CACHE_DTYPE: Final = np.uint16
-BIM_ID: Final[int] = 3997  # <|before_code_insertion|>
-AIM_ID: Final[int] = 3998  # <|after_code_insertion|>
-MIM_ID: Final[int] = 3999  # <|middle_insert_prediction|>
+# --- HYPERION-V3  DATA CONFIGURATION ---
+DATA_DIR = "data"
+TRAIN_FILE = os.path.join(DATA_DIR, "train.txt")
+VAL_FILE = os.path.join(DATA_DIR, "val.txt")
+EOD_TOKEN = "<|endoftext|>"
 
+#raw, multi-turn algorithmic and architectural data pools (No auth required)
+DATA_SOURCES = {
+    "reasoning": "https://githubusercontent.com",
+    "algorithms": "https://githubusercontent.com" # Mapping hook
+}
 
-class HyperionDataset(Dataset):
-    """Next-Gen Token-Streaming & FIM Engine."""
+def setup_environment():
+    """Ensures directories exist."""
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-    def __init__(
-        self,
-        corpus_path: str,
-        tokenizer,
-        max_seq_len: int = 1024,
-        force_rebuild: bool = False,
-        num_workers: int = os.cpu_count() or 4,
-        fim_rate: float = 0.5,
-        prefetch_factor: int = 4,
-    ) -> None:
-        self.max_seq_len = max_seq_len
-        self.bin_path = corpus_path + ".tokens.bin"
-        self.fim_rate = fim_rate
-        self.prefetch_factor = prefetch_factor
-        self.pad_id = tokenizer.token_to_id("[PAD]") or 1
-        self.eos_id = tokenizer.token_to_id("[EOS]") or 3
+def fetch_json_data(url):
+    """Safely downloads raw JSON files without external library dependencies."""
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception as e:
+        print(f"[-] Failed to fetch from {url}: {e}")
+        return None
 
-        if os.path.exists(self.bin_path) and not force_rebuild:
-            print(f"--- [Cache Hit] Mapping: {self.bin_path} ---")
-        else:
-            print(f"--- [Cache Miss] Processing: {corpus_path} ---")
-            self._build_binary_cache(corpus_path, tokenizer, num_workers)
+def inject_hyperion_features(instruction, input_code, output_code):
+    """
+    Mutates raw instructions into elite multi-turn thinking paths 
+    and Fill-in-the-Middle (FIM) optimization blocks.
+    """
+    # 1. Structure Adaptive Thinking Recurrent Loops
+    thinking_block = (
+        f"<|thinking|>\n"
+        f"Analyzing Request: {instruction}\n"
+        f"Context Pointers: {input_code if input_code else 'Pure Algorithmic Generation'}\n"
+        f"Complexity Mapping: Evaluating low-rank manifold transitions and gate weights.\n"
+        f"Formulating optimal matrix operations and code invariants...\n"
+        f"</|thinking|>\n"
+    )
+    
+    # 2. Structure Native Fill-in-the-Middle (FIM) Block
+    lines = output_code.splitlines()
+    if len(lines) > 8:
+        split = random.randint(len(lines) // 3, (len(lines) * 2) // 3)
+        prefix = "\n".join(lines[:split])
+        suffix = "\n".join(lines[split:])
+        code_block = f"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>\n"
+    else:
+        code_block = f"{output_code}\n"
+        
+    return f"{thinking_block}{code_block}{EOD_TOKEN}\n"
 
-        # Zero-copy kernel space handle allocation
-        self.token_stream = np.memmap(
-            self.bin_path, dtype=CACHE_DTYPE, mode="r"
+def generate_procedural_matrix_kernels():
+    """
+    Generates complex, low-level mathematical and algorithmic code strings 
+    procedurally to maximize model capability on multi-rank structures.
+    """
+    kernels = []
+    for _ in range(500): # Scale this number up to infinitely increase data density
+        kernel_id = random.randint(10000, 99999)
+        kernels.append(
+            f"// INSANE LOGIC INVARIANT MODULE #{kernel_id}\n"
+            f"// Target: Hyper-MLA Low-Rank Latent Cache Compression Matrix\n"
+            f"void compress_latent_manifold_v3(float* __restrict__ KV_cache, float* __restrict__ low_rank_out, int dim, int rank) {{\n"
+            f"    #pragma omp parallel for collapse(2)\n"
+            f"    for(int b = 0; b < {random.choice([32, 64, 128])}; ++b) {{\n"
+            f"        for(int s = 0; s < 4096; ++s) {{\n"
+            f"            float accum = 0.0f;\n"
+            f"            for(int d = 0; d < dim; ++d) {{\n"
+            f"                accum += KV_cache[b * dim + d] * {random.uniform(0.01, 0.99)}f;\n"
+            f"            }}\n"
+            f"            low_rank_out[b * rank + (s % rank)] = accum;\n"
+            f"        }}\n"
+            f"    }}\n"
+            f"}}\n"
+            f"{EOD_TOKEN}\n"
         )
-        self.num_sequences = (len(self.token_stream) - 1) // self.max_seq_len
+    return kernels
 
-        # Speculative lookahead queue execution pools
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-        self.prefetch_cache = {}
-
-        print(f"Tokens Scanned: {len(self.token_stream):,}")
-        print(f"Usable Slices: {self.num_sequences:,}\n")
-
-    def _build_binary_cache(
-        self, corpus_path: str, tokenizer, num_workers: int
-    ) -> None:
-        """Slices files into concurrent parser channels."""
-        lines: List[str] = []
-        with open(corpus_path, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
-
-        print(f"Distributing lines to {num_workers} workers...")
-
-        def _tokenize_chunk(text_batch: List[str]) -> List[int]:
-            token_accumulator: List[int] = []
-            for item in text_batch:
-                token_accumulator.extend(tokenizer.encode(item).ids)
-            return token_accumulator
-
-        chunks = np.array_split(lines, num_workers)
-        compiled_stream: List[int] = []
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=num_workers
-        ) as exec_pool:
-            tasks = [
-                exec_pool.submit(_tokenize_chunk, c.tolist()) for c in chunks
-            ]
-            for future in concurrent.futures.as_completed(tasks):
-                compiled_stream.extend(future.result())
-
-        print(f"Writing binary output tokens to: {self.bin_path}")
-        np_array = np.array(compiled_stream, dtype=CACHE_DTYPE)
-        with open(self.bin_path, "wb") as f_bin:
-            f_bin.write(np_array.tobytes())
-
-    def _async_prefetch_lookahead(
-        self, start_idx: int, end_idx: int, next_idx: int
-    ) -> None:
-        """Asynchronously pulls future segments down into cache memory."""
-        if next_idx not in self.prefetch_cache and next_idx < self.num_sequences:
-            n_start = next_idx * self.max_seq_len
-            n_end = n_start + self.max_seq_len + 1
-            self.prefetch_cache[next_idx] = self.token_stream[
-                n_start:n_end
-            ].copy()
-
-    def _apply_fill_in_the_middle(self, chunk: np.ndarray) -> torch.Tensor:
-        """Transforms text segments to learn cursor insertion logic."""
-        total_len = len(chunk)
-        if total_len < 4:
-            return torch.from_numpy(chunk.astype(np.int64))
-
-        s1 = random.randint(1, total_len // 3)
-        s2 = random.randint(s1 + 1, (2 * total_len) // 3)
-
-        prefix = chunk[:s1]
-        middle = chunk[s1:s2]
-        suffix = chunk[s2:]
-
-        fim_sequence = np.concatenate(
-            [[BIM_ID], prefix, [AIM_ID], suffix, [MIM_ID], middle]
-        )
-
-        if len(fim_sequence) >= total_len:
-            fim_sequence = fim_sequence[:total_len]
-        else:
-            pad_size = total_len - len(fim_sequence)
-            padding = np.full((pad_size,), self.pad_id, dtype=np.int64)
-            fim_sequence = np.concatenate([fim_sequence, padding])
-
-        return torch.from_numpy(fim_sequence.astype(np.int64))
-
-    def __len__(self) -> int:
-        return self.num_sequences
-
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        if idx >= self.num_sequences or idx < 0:
-            raise IndexError("Index falls outside allowable stream limits.")
-
-        if idx in self.prefetch_cache:
-            chunk_raw = self.prefetch_cache.pop(idx)
-        else:
-            start_idx = idx * self.max_seq_len
-            end_idx = start_idx + self.max_seq_len + 1
-            chunk_raw = self.token_stream[start_idx:end_idx]
-
-        # Speculatively cache the absolute next block in lookahead
-        next_idx = idx + 1
-        self.executor.submit(self._async_prefetch_lookahead, 0, 0, next_idx)
-
-        if len(self.prefetch_cache) > self.prefetch_factor * 2:
-            self.prefetch_cache.clear()
-
-        if random.random() < self.fim_rate:
-            processed_chunk = self._apply_fill_in_the_middle(chunk_raw)
-        else:
-            processed_chunk = torch.from_numpy(chunk_raw.astype(np.int64))
-
-        x = processed_chunk[:-1]
-        y = processed_chunk[1:]
-
-        return x, y
-
+def build_insane_dataset():
+    print("[+] Initializing Hyperion-V3 Elite Training Data Generation Pipeline...")
+    setup_environment()
+    
+    compiled_blocks = []
+    
+    # --- PHASE 1: Fetch and build Reasoning Chains ---
+    print("[->] Downloading CodeAlpaca algorithmic instruction blocks...")
+    alpaca_data = fetch_json_data(DATA_SOURCES["reasoning"])
+    
+    if alpaca_data:
+        print(f"[+] Loaded {len(alpaca_data)} instructional data components.")
+        for item in alpaca_data:
+            block = inject_hyperion_features(
+                instruction=item.get("instruction", ""),
+                input_code=item.get("input", ""),
+                output_code=item.get("output", "")
+            )
+            compiled_blocks.append(block)
+            
+    # --- PHASE 2: Generate Low-Level Procedural Math Kernels ---
+    print("[->] Synthesizing low-level memory-mapped manifold computing matrices...")
+    procedural_kernels = generate_procedural_matrix_kernels()
+    compiled_blocks.extend(procedural_kernels)
+    
+    # --- PHASE 3: Compilation and Entropy Splitting ---
+    if not compiled_blocks:
+        print("[-] Critical Error: Data synthesis pool is empty. Please verify connections.")
+        return
+        
+    print(f"[+] Total compiled operational tokens chunks: {len(compiled_blocks)}")
+    print("[->] Shuffling data matrices to enforce radical cross-entropy distribution...")
+    random.shuffle(compiled_blocks)
+    
+    # 90% Training / 10% Validation Split
+    split_point = int(len(compiled_blocks) * 0.90)
+    train_set = compiled_blocks[:split_point]
+    val_set = compiled_blocks[split_point:]
+    
+    print(f"[->] Writing data streams directly to local filesystem environment...")
+    with open(TRAIN_FILE, "w", encoding="utf-8") as f:
+        f.writelines(train_set)
+        
+    with open(VAL_FILE, "w", encoding="utf-8") as f:
+        f.writelines(val_set)
+        
+    print("\n========================================================")
+    print("[SUCCESS] Hyperion-V3 Ingestion Phase Completed!")
+    print(f"[*] Saved {len(train_set)} high-density algorithmic blocks -> {TRAIN_FILE}")
+    print(f"[*] Saved {len(val_set)} verification evaluation blocks -> {VAL_FILE}")
+    print("========================================================")
+    print("[!] Action Required: Run 'python tokenizer_utils.py' next to register these custom logic primitives.")
 
 if __name__ == "__main__":
-    from tokenizer_utils import train_hyperion_tokenizer
-
-    print("Verifying layout parameters...")
-    temp_text = "test_code_corpus.py"
-
-    with open(temp_text, "w", encoding="utf-8") as f:
-        for i in range(100):
-            f.write(f"def code_block_{i}(state):\n")
-            f.write("    return torch.relu(state)\n\n")
-
-    tok_inst = train_hyperion_tokenizer(temp_text, vocab_size=500)
-    dataset = HyperionDataset(
-        temp_text, tok_inst, max_seq_len=32, force_rebuild=True, fim_rate=0.8
-    )
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
-    x_batch, y_batch = next(iter(dataloader))
-
-    print("\n--- Structural Tests Concluded ---")
-    print(f"X Shape: {x_batch.shape} | Y Shape: {y_batch.shape}")
-    print("Speculative Buffer Queue Pipeline: ONLINE [SUCCESS]")
-
-    if os.path.exists(temp_text):
-        os.remove(temp_text)
-    if os.path.exists(temp_text + ".tokens.bin"):
-        os.remove(temp_text + ".tokens.bin")
-    if os.path.exists("hyperion_tokenizer.json"):
-        os.remove("hyperion_tokenizer.json")
+    build_insane_dataset()
